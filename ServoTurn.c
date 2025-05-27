@@ -1,85 +1,82 @@
-// Assumes mikroC for PIC syntax (Delay_ms, Delay_us, etc.)
-// PIC16F877A @ 8 MHz
-// RC0 = IR input
-// RC2 = CCP1 / PWM output to servo
+/* ==========================================================
+   PIC16F877A â€¢ 8 MHz â€¢ mikroC PRO
+   RB0 active-LOW IR  ?  RC2 servo (0 Â° / 180 Â°) + RC6 LED
+   ========================================================== */
 
-unsigned int angle_us = 1500;  // start centered (1.5 ms pulse)
-const unsigned int rate = 50;  // change in µs per cycle
+#define SERVO_MIN    1000u        // 0.50 ms  = 1000 Ã— 0.5 Âµs  (0Â°)
+#define SERVO_MAX    5000u        // 2.50 ms  = 5000 Ã— 0.5 Âµs  (180Â°)
+#define SERVO_FRAME  40000u       // 20 ms frame
 
-//------------------------------------------------------------------------------
-// Send a 1–2 ms pulse via hardware PWM on CCP1
-void set_servo_position1(int degrees) {
-    // Map -90..+90° to 500..2500 µs
-    int pulse_width = (degrees + 90) * 10 + 500;
-    // pulse_width now ranges 500..2500
+/* --- SFR shortcuts --- */
+#define TMR1H   (*(volatile unsigned char*)0x0F)
+#define TMR1L   (*(volatile unsigned char*)0x0E)
+#define T1CON   (*(volatile unsigned char*)0x10)
+#define CCPR1H  (*(volatile unsigned char*)0x16)
+#define CCPR1L  (*(volatile unsigned char*)0x15)
+#define CCP1CON (*(volatile unsigned char*)0x17)
+#define PIR1    (*(volatile unsigned char*)0x0C)
+#define PIE1    (*(volatile unsigned char*)0x8C)
+#define INTCON  (*(volatile unsigned char*)0x0B)
+#define OPTION_REG (*(volatile unsigned char*)0x81)
 
-    // CCP1 is PWM mode, so:
-    // CCPR1L = pulse_width/4
-    // CCP1CON<5:4> = (pulse_width%4)
-    CCPR1L = pulse_width >> 2;
-    CCP1CON = (CCP1CON & 0xCF) | ((pulse_width & 0x03) << 4);
+/* --- Bit masks --- */
+#define CCP1IF 0x04
+#define CCP1IE 0x04
+#define PEIE   0x40
+#define GIE    0x80
 
-    Delay_ms(50);  // let servo reach position
-}
+volatile unsigned int  pulseTicks = SERVO_MIN;
+volatile unsigned char highPhase  = 1;
 
-//------------------------------------------------------------------------------
-// Map your angle_us (1000–2000) back to -90..+90°
-int us_to_degrees(unsigned int us) {
-    // 1000 -> -90°, 1500 -> 0°, 2000 -> +90°
-    // (us - 1500) / (500/90) = (us - 1500) * 90/500
-    return (int)(((us - 1500) * 90) / 500);
-}
-
-//------------------------------------------------------------------------------
-// Configure CCP1 (RC2) for PWM, TMR2 for 1 kHz base ? 20 ms period
-void pwm1_init() {
-    // Set PR2 so that PWM period = (PR2 + 1) × 4 × Tosc × TMR2_prescale
-    // We want 20 ms = 20000 µs. With Fosc=8 MHz, Tosc=0.125 µs, prescale=16:
-    // PR2 = (20000 / (4 × 0.125 × 16)) - 1 ˜ 249
-    PR2 = 249;
-    T2CON = 0b00000110;  // TMR2 on, prescale 16
-
-    // Set RC2/CCP1 as output
-    TRISC = TRISC | 0X04
-    // Configure CCP1 in PWM mode (CCP1CON<3:0> = 0b1100)
-    CCP1CON = 0b00001100;
-    // The top two bits of CCP1CON (5:4) will hold the LSBs of the duty cycle
-}
-
-int open_angle   =  35;   // +35° = half of your 70° swing when IR ON
-int closed_angle = -35;   // -35° = half of your 70° swing when IR OFF
-int step_delay   =  10;   // ms pause per 1° step (10ms ? ~0.7s full 70°)
-
-void main() {
-    int current = 0;      // start centered at 0°
-    int target  = 0;
-
-    // ===== Configure TRISC =====
-    STATUS |= 0x20;       // bank 1
-    TRISC = TRISC | 0X01 ; // bit 0 is input, bit 2 is output
-    STATUS &= 0xDF;       // bank 0
-
-    pwm1_init();          // set up CCP1 PWM on RC2
-    set_servo_position1(current);
-
-    while (1) {
-        // choose target based on IR
-        if (PORTC & 0X01)
-            target = open_angle;
-        else
-            target = closed_angle;
-
-        // step current toward target
-        if (current < target) {
-            current++;
-            set_servo_position1(current);
-            Delay_ms(10);
+/* --- CCP1 compare ISR (50 Hz PWM) --- */
+void interrupt() {
+    if (PIR1 & CCP1IF) {
+        if (highPhase) {
+            CCPR1H  = (unsigned char)(pulseTicks >> 8);
+            CCPR1L  = (unsigned char)pulseTicks;
+            CCP1CON = 0x09;        // clear RC2 on match
+            highPhase = 0;
+        } else {
+            unsigned int rest = SERVO_FRAME - pulseTicks;
+            CCPR1H  = (unsigned char)(rest >> 8);
+            CCPR1L  = (unsigned char)rest;
+            CCP1CON = 0x08;        // set RC2 on match
+            highPhase = 1;
         }
-        else if (current > target) {
-            current--;
-            set_servo_position1(current);
-            Delay_ms(10);
-        }
-        // if current==target, do nothing until IR changes
+        TMR1H = 0;  TMR1L = 0;
+        PIR1 &= ~CCP1IF;
     }
 }
+
+/* ------------ MAIN ------------ */
+void main(void)
+{
+    OPTION_REG &= 0x7F;      // enable PORTB pull-ups (RBPU = 0)
+
+    TRISB = 0x01;            // RB0 input
+    TRISC &= 0xBF;           // RC6 output
+    TRISC &= 0xFB;           // RC2 output
+    PORTC &= 0x3F;           // LED off, servo low
+
+    /* CCP1 / Timer-1 setup */
+    TMR1H = 0;  TMR1L = 0;
+    CCP1CON = 0x08;                      // first compare sets RC2
+    CCPR1H  = (unsigned char)(pulseTicks >> 8);
+    CCPR1L  = (unsigned char)pulseTicks;
+    T1CON   = 0x01;                      // Timer-1 ON, 1:1 prescale
+
+    PIE1   |= CCP1IE;
+    INTCON |= PEIE | GIE;
+
+    for (;;) {
+        if ((PORTB & 0x01) == 0) {       // RB0 LOW ? object detected
+            pulseTicks = SERVO_MAX;      // 2.50 ms  (180Â°)
+            PORTC |=  0x40;              // RC6 LED ON
+        } else {                         // RB0 HIGH ? no object
+            pulseTicks = SERVO_MIN;      // 0.50 ms  (0Â°)
+            PORTC &= ~0x40;              // RC6 LED OFF
+        }
+        /* PWM width updated automatically by ISR next frame */
+    }
+}
+
