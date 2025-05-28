@@ -48,8 +48,6 @@ void init_io_adc_pwm(void) {
     /* H-bridge direction: forward (IN3=1, IN4=0) */
     RC4_bit = 1;                   /* IN3 HIGH                  */
     RC5_bit = 0;                   /* IN4 LOW                   */
-
-    RC7_bit = 0;                   /* LED OFF                   */
 }
 
 /* ------------------------------ MAIN ------------------------ */
@@ -63,11 +61,9 @@ void main(void) {
         pot  = adc_read_ra0();           /* 0–1023                  */
         duty = pot_to_pwm(pot);          /* 0–249   (<=PR2)         */
 
-        if (RB1_bit == 0) {              /* IR triggered (LOW)      */
-            RC7_bit  = 1;                /* LED ON                  */
+        if (!(PORTB & 0x01) {              /* IR triggered (LOW)      */
             CCPR2L   = duty;             /* enable PWM, set speed   */
         } else {                         /* no object               */
-            RC7_bit  = 0;                /* LED OFF                 */
             CCPR2L   = 0;                /* PWM duty 0 ? pump off   */
         }
     }
