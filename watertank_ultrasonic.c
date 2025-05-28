@@ -43,27 +43,29 @@ void delay10us(void){
         asm NOP;
     }
 }
-int dist_cm(void) {
-    int d;
+int dist_cm(void){
+    unsigned char saveIE = PIE1 & CCP1IE;    /* remember state */
+    PIE1 &= ~CCP1IE;                         /* servo off      */
 
-    /* clear Timer1 */
-    TMR1H = 0;
-    TMR1L = 0;
+    /* reset & start Timer-1 */
+    T1CON &= ~0x01;  TMR1H = 0; TMR1L = 0;
+    T1CON |=  0x01;
 
-    /* 10 µs trigger on RC2 (bit 2) */
-    PORTC |=  0b00000100;
-    delay10us();
-    PORTC &= ~0b00000100;
+    /* 10 µs trigger on *RC5* */
+    PORTC |=  0b00100000;
+     delay10us();
+    PORTC &= ~0b00100000;
 
-    /* wait for echo HIGH on RC3 (bit 3) */
-    while (!(PORTC & 0b00001000));
-    T1CON |=  0x01;                 /* start Timer1               */
-    while (  (PORTC & 0b00001000));
-    T1CON &= ~0x01;                 /* stop Timer1                */
+    /* wait for echo HIGH on RC3 */
+    while(!(PORTC & 0b00001000));
+    TMR1H = 0; TMR1L = 0;                     /* zero on edge  */
+    while(  PORTC & 0b00001000);              /* wait LOW      */
+    T1CON &= ~0x01;                           /* stop Timer1   */
 
-    d  = (TMR1H << 8) | TMR1L;      /* counts (µs @ Fosc/4)       */
-    d  = d / 58;                    /* ~58 µs per cm              */
-    return d;
+    unsigned int ticks = (TMR1H << 8) | TMR1L;/* 0.5 µs ticks  */
+    PIE1 |= saveIE;                           /* servo back on */
+
+    return (int)(ticks / 58);  /* ˜ (ticks*0.5 µs) / 58 µs/cm */
 }
 
 
@@ -110,9 +112,9 @@ void main(void) {
         distance = dist_cm();            /* blocking read (≈ 2 ms)   */
 
         if (distance > 100) {            /* tank low? (>100 cm)      */
-            PORTB |=  0b00000100;        /* RB2 HIGH  → LED ON       */
+            PORTB |=  0b00001000;        /* RB3 HIGH  → LED ON       */
         } else {
-            PORTB &= ~0b00000100;        /* RB2 LOW   → LED OFF      */
+            PORTB &= ~0b00001000;        /* RB3 LOW   → LED OFF      */
         }
 
         /* optional pause to reduce duty-cycle of HC-SR04      */
