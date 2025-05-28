@@ -8,16 +8,16 @@
 #define SERVO_FRAME  40000u       // 20 ms frame
 
 /* --- SFR shortcuts --- */
-#define TMR1H   (*(volatile unsigned char*)0x0F)
-#define TMR1L   (*(volatile unsigned char*)0x0E)
-#define T1CON   (*(volatile unsigned char*)0x10)
-#define CCPR1H  (*(volatile unsigned char*)0x16)
-#define CCPR1L  (*(volatile unsigned char*)0x15)
-#define CCP1CON (*(volatile unsigned char*)0x17)
-#define PIR1    (*(volatile unsigned char*)0x0C)
-#define PIE1    (*(volatile unsigned char*)0x8C)
-#define INTCON  (*(volatile unsigned char*)0x0B)
-#define OPTION_REG (*(volatile unsigned char*)0x81)
+#define TMR1H   ((volatile unsigned char)0x0F)
+#define TMR1L   ((volatile unsigned char)0x0E)
+#define T1CON   ((volatile unsigned char)0x10)
+#define CCPR1H  ((volatile unsigned char)0x16)
+#define CCPR1L  ((volatile unsigned char)0x15)
+#define CCP1CON ((volatile unsigned char)0x17)
+#define PIR1    ((volatile unsigned char)0x0C)
+#define PIE1    ((volatile unsigned char)0x8C)
+#define INTCON  ((volatile unsigned char)0x0B)
+#define OPTION_REG ((volatile unsigned char)0x81)
 
 /* --- Bit masks --- */
 #define CCP1IF 0x04
@@ -54,9 +54,8 @@ void main(void)
     OPTION_REG &= 0x7F;      // enable PORTB pull-ups (RBPU = 0)
 
     TRISB = 0x01;            // RB0 input
-    TRISC &= 0xBF;           // RC6 output
-    TRISC &= 0xFB;           // RC2 output
-    PORTC &= 0x3F;           // LED off, servo low
+    TRISC &= 0x00;
+    PORTC &= 0x00;
 
     /* CCP1 / Timer-1 setup */
     TMR1H = 0;  TMR1L = 0;
@@ -68,15 +67,12 @@ void main(void)
     PIE1   |= CCP1IE;
     INTCON |= PEIE | GIE;
 
-    for (;;) {
-        if ((PORTB & 0x01) == 0) {       // RB0 LOW ? object detected
+    while(1) {
+        if (!(PORTB & 0x02) {       // RB1 LOW ? object detected
             pulseTicks = SERVO_MAX;      // 2.50 ms  (180°)
-            PORTC |=  0x40;              // RC6 LED ON
         } else {                         // RB0 HIGH ? no object
             pulseTicks = SERVO_MIN;      // 0.50 ms  (0°)
-            PORTC &= ~0x40;              // RC6 LED OFF
         }
         /* PWM width updated automatically by ISR next frame */
     }
 }
-
